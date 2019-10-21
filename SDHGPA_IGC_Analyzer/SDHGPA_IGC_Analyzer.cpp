@@ -21,7 +21,7 @@
 
 // Bump this whenever a substantial change is made
 #define PROGRAM_NAME   "SDHGPA_IGC_Analyzer"
-#define VERSION_STRING "1.0.4"
+#define VERSION_STRING "1.0.5"
 
 
 inline double max(double a, double b) {return a > b ? a : b;}
@@ -650,6 +650,11 @@ void AnalyzeIGCFile(const std::string& filename)
     
     std::ifstream source;
     source.open(filename);
+    if (source.fail())
+    {
+        std::cerr << "Failed to open " << filename << std::endl;
+        return;
+    }
     std::string line;
     latlon lastpt;
     int lastalt(INT_MIN);
