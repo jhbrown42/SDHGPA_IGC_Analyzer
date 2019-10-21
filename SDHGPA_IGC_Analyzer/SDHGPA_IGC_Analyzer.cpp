@@ -21,7 +21,7 @@
 
 // Bump this whenever a substantial change is made
 #define PROGRAM_NAME   "SDHGPA_IGC_Analyzer"
-#define VERSION_STRING "1.0.3"
+#define VERSION_STRING "1.0.4"
 
 
 inline double max(double a, double b) {return a > b ? a : b;}
@@ -705,6 +705,15 @@ void AnalyzeIGCFile(const std::string& filename)
             int alt = 0;
             if (std::sscanf(line.c_str(),"B%6d%2d%5d%c%3d%5d%c%*c%5d", &timestamp, &latdeg, &latmin, &latNS, &londeg, &lonmin, &lonEW, &alt) == 8)
             {
+                if (alt == 0)
+                {
+                    // Some IGCs record GPS altitude but not baro altitude, so see if we can use GPS altitude
+                    int gpsalt = 0;
+                    if (std::sscanf(line.c_str(),"B%*6d%*2d%*5d%*c%*3d%*5d%*c%*c%*5d%5d", &gpsalt) == 1)
+                    {
+                        alt = gpsalt;
+                    }
+                }
                 lat_t lattmin = latdeg*60000 + latmin;     // latitude in thousandths of minutes
                 lon_t lontmin = londeg*60000 + lonmin;     // longitude in thousandths of minutes
                 if (latNS == 'S') lattmin = -lattmin;
