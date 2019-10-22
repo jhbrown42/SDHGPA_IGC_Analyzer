@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iostream>
 #include <iomanip>
+#include <memory>
 #include <sstream>
 #include <unistd.h>
 #include <vector>
@@ -21,7 +22,7 @@
 
 // Bump this whenever a substantial change is made
 #define PROGRAM_NAME   "SDHGPA_IGC_Analyzer"
-#define VERSION_STRING "1.0.5"
+#define VERSION_STRING "1.0.6"
 
 
 inline double max(double a, double b) {return a > b ? a : b;}
@@ -100,7 +101,7 @@ static void AnalyzePath(const std::vector<latlon>& pts)
 {
     // Build all point-point distances first, but while we're at it, do max straight line distance
     size_t npts = pts.size();
-    double* dist = new double [npts*npts];
+    auto dist = std::make_unique<double[]>(npts*npts);
 #define DIST(i,j) dist[(i)*npts+(j)]
     // Straight Line
     double  maxDSL = 0.0;
@@ -133,8 +134,8 @@ static void AnalyzePath(const std::vector<latlon>& pts)
     
     // Build list of best first leg for any given first turnpoint, and
     // list of best last leg for any given last turnpoint
-    pt_index_t* bestF = new pt_index_t [npts];
-    pt_index_t* bestL = new pt_index_t [npts];
+    auto bestF = std::make_unique<pt_index_t[]>(npts);
+    auto bestL = std::make_unique<pt_index_t[]>(npts);
     for (pt_index_t i=0; i<npts; i++)
     {
         double max = 0.0;
@@ -556,10 +557,6 @@ static void AnalyzePath(const std::vector<latlon>& pts)
         std::cout << "n skip                       : " << nskip << std::endl;
         std::cout << "n skip both                  : " << nskipboth << std::endl;
     }
-
-    delete[] dist;
-    delete[] bestF;
-    delete[] bestL;
 }
 
 void OpenKML(const std::string& filename, const std::string& date, const std::string& pilot)
@@ -794,19 +791,6 @@ int main(int argc, char * argv[])
     }
     if (!FAIsphere) WGS84 = true;
 
-//    AnalyzeIGCFile("/Users/jeff/Documents/From T43/Flights copy/2011-09-11-BRA-008-01.igc");
-//    AnalyzeIGCFile("/Users/jeff/Documents/From T43/Flights/20090927GPSVAR.igc");
-//    AnalyzeIGCFile("/Users/jeff/Documents/From T43/Flights copy/38V_20030831GPSVAR.igc");
-//    AnalyzeIGCFile("/Users/jeff/Downloads/2017-07-27-XCS-AAA-01.igc");
-//    AnalyzeIGCFile("/Users/jeff/Downloads/77RA0OV1.igc");
-//    AnalyzeIGCFile("/Users/jeff/Downloads/79HA0OV1.igc");
-//    AnalyzeIGCFile("/Users/jeff/Downloads/79HA0OV1-JB.igc");
-//    AnalyzeIGCFile("/Users/jeff/Downloads/2017-06-08-XFH-000-01.igc");
-//    AnalyzeIGCFile("/Users/jeff/devel/JHB/Ball2IGC/IGC Files From Ball2IGC/2003-07-27-XBV-000-01.IGC");
-//    AnalyzeIGCFile("/Users/jeff/devel/JHB/Ball2IGC/IGC Files From Ball2IGC/2003-08-10-XBV-000-01.IGC");
-//    AnalyzeIGCFile("/Users/jeff/devel/JHB/Ball2IGC/IGC Files From Ball2IGC/2003-08-31-XBV-000-01.IGC");
-//    AnalyzeIGCFile("/Users/jeff/Downloads/2003-07-09-XBV-000-01.IGC");
-//    AnalyzeIGCFile("/Users/jeff/Library/Developer/Xcode/DerivedData/Ball2IGC-dbgimcvfckizjhejwkjkbzdxdivt/Build/Products/Debug/1997-05-18-XBV-000-01.IGC");
     if (verbose)
     {
         for (int i=1; i< argc; i++) {
