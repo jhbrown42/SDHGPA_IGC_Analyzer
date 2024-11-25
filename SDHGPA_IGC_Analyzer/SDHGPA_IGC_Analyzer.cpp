@@ -6,12 +6,14 @@
 //  Copyright (c) 2017 Jeffrey H. Brown. All rights reserved.
 //
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <iomanip>
+#include <map>
 #include <memory>
 #include <sstream>
 #include <unistd.h>
@@ -22,7 +24,7 @@
 
 // Bump this whenever a substantial change is made
 #define PROGRAM_NAME   "SDHGPA_IGC_Analyzer"
-#define VERSION_STRING "1.0.6"
+#define VERSION_STRING "1.0.7"
 
 
 inline double max(double a, double b) {return a > b ? a : b;}
@@ -50,6 +52,60 @@ std::ofstream kmlstream;
 
 using namespace GeographicLib;
 const Geodesic& geod = Geodesic::WGS84();
+
+// This stuff is to support scoring the SDHGPA Hang Gliding XC Contest, which uses the best two out of
+// three adjusted scores as long as those scores don't come from the same flight.
+enum FlightType {Sl, Or, Tr};
+constexpr double multOR = 1.2L;     // The distance multiplier for out & return flights
+constexpr double multTR = 1.5L;     // The distance multiplier for triangle flights
+class HGCandidate {
+public:
+    FlightType  ft;
+    double      distance = 0.0;
+    double      score = 0.0;        // distance * multiplier if any
+    std::string date;
+    int         timestamp = -1;     // first B record timestamp, just in case pilot has multiple flights on same date
+};
+typedef std::pair<HGCandidate, HGCandidate> CandidatePair;
+class PilotCandidates {
+public:
+    PilotCandidates(){SL.first.ft = Sl;SL.second.ft = Sl;OR.first.ft = Or;OR.second.ft = Or;TR.first.ft = Tr;TR.second.ft = Tr;}
+    CandidatePair SL; // The largest and second largest scoring candidates for straight-line
+    CandidatePair OR; // The largest and second largest scoring candidates for out & return
+    CandidatePair TR; // The largest and second largest scoring candidates for triangle
+};
+static double maxSL = 0.0, maxOR = 0.0, maxTR = 0.0;    // Ugh, global vars to pass data back from AnalyzePath
+std::map<std::string, PilotCandidates>    pilots;       // pilots and their candidates
+class Result {
+public:
+    double      maxscore = 0.0;
+    double      distance1 = 0.0;
+    FlightType  ft1;
+    std::string date1;
+    double      distance2 = 0.0;
+    FlightType  ft2;
+    std::string date2;
+};
+void Do2(const CandidatePair& a, const CandidatePair& b, Result& res)
+{
+    double s1 = a.first.score;
+    const HGCandidate* p = nullptr;
+    if (b.first.timestamp == a.first.timestamp && b.first.date == a.first.date)
+        p = &b.second;
+    else
+        p = &b.first;
+    double s2 = p->score;
+    if (s1+s2 > res.maxscore)
+    {
+        res.maxscore = s1+s2;
+        res.distance1 = a.first.distance;
+        res.ft1 = a.first.ft;
+        res.date1 = a.first.date;
+        res.distance2 = p->distance;
+        res.ft2 = p->ft;
+        res.date2 = p->date;
+    }
+}
 
 // This will return the distance between two points in meters given lat/lon in thousandths of minutes
 double Distance(const latlon& p1, const latlon& p2)
@@ -557,6 +613,10 @@ static void AnalyzePath(const std::vector<latlon>& pts)
         std::cout << "n skip                       : " << nskip << std::endl;
         std::cout << "n skip both                  : " << nskipboth << std::endl;
     }
+    // "Pass" back data for the HG XC contest
+    maxSL = maxDSL/meterspermile;
+    maxOR = maxDOR/meterspermile;
+    maxTR = maxDT/meterspermile;
 }
 
 void OpenKML(const std::string& filename, const std::string& date, const std::string& pilot)
@@ -658,6 +718,7 @@ void AnalyzeIGCFile(const std::string& filename)
     bool KMLB = false;
     std::string pilot;
     std::stringstream date;
+    int firsttimestamp = -1;
     while (std::getline(source, line))
     {
 //        std::cout << '\n' << line << std::endl;
@@ -684,6 +745,7 @@ void AnalyzeIGCFile(const std::string& filename)
         if (line.find("HFPLT")==0)
         {
             pilot = line.c_str()+5;
+            pilot.erase(std::find_if_not(pilot.rbegin(), pilot.rend(), ::isspace).base(), pilot.end()); // Trim trailing whitespace
             std::cout << pilot << std::endl;
         }
         
@@ -707,6 +769,7 @@ void AnalyzeIGCFile(const std::string& filename)
             int alt = 0;
             if (std::sscanf(line.c_str(),"B%6d%2d%5d%c%3d%5d%c%*c%5d", &timestamp, &latdeg, &latmin, &latNS, &londeg, &lonmin, &lonEW, &alt) == 8)
             {
+                if (firsttimestamp == -1) firsttimestamp = timestamp;
                 if (alt == 0)
                 {
                     // Some IGCs record GPS altitude but not baro altitude, so see if we can use GPS altitude
@@ -762,6 +825,56 @@ void AnalyzeIGCFile(const std::string& filename)
     }
     if (KMLfile)
         CloseKML();
+
+    // Collect flight data by pilot for the HG XC contest
+    PilotCandidates newpc;          // "empty" record
+    pilots.emplace(pilot, newpc);   // add it if the pilot doesn't already have one
+    auto& pc = pilots.find(pilot)->second;
+    if (maxSL > pc.SL.first.distance)
+    {
+        pc.SL.second = pc.SL.first; // shift first to second
+        pc.SL.first.distance = maxSL;
+        pc.SL.first.score = maxSL;
+        pc.SL.first.date = date.str();
+        pc.SL.first.timestamp = firsttimestamp;
+    }
+    else if (maxSL > pc.SL.second.distance && (pc.SL.first.timestamp != firsttimestamp || pc.SL.first.date != date.str()))
+    {
+        pc.SL.second.distance = maxSL;
+        pc.SL.second.score = maxSL;
+        pc.SL.second.date = date.str();
+        pc.SL.second.timestamp = firsttimestamp;
+    }
+    if (maxOR > pc.OR.first.distance)
+    {
+        pc.OR.second = pc.OR.first; // shift first to second
+        pc.OR.first.distance = maxOR;
+        pc.OR.first.score = maxOR * multOR;
+        pc.OR.first.date = date.str();
+        pc.OR.first.timestamp = firsttimestamp;
+    }
+    else if (maxOR > pc.OR.second.distance && (pc.OR.first.timestamp != firsttimestamp || pc.OR.first.date != date.str()))
+    {
+        pc.OR.second.distance = maxOR;
+        pc.OR.second.score = maxOR * multOR;
+        pc.OR.second.date = date.str();
+        pc.OR.second.timestamp = firsttimestamp;
+    }
+    if (maxTR > pc.TR.first.distance)
+    {
+        pc.TR.second = pc.TR.first; // shift first to second
+        pc.TR.first.distance = maxTR;
+        pc.TR.first.score = maxTR * multTR;
+        pc.TR.first.date = date.str();
+        pc.TR.first.timestamp = firsttimestamp;
+    }
+    else if (maxTR > pc.TR.second.distance && (pc.TR.first.timestamp != firsttimestamp || pc.TR.first.date != date.str()))
+    {
+        pc.TR.second.distance = maxTR;
+        pc.TR.second.score = maxTR * multTR;
+        pc.TR.second.date = date.str();
+        pc.TR.second.timestamp = firsttimestamp;
+    }
 }
 
 int main(int argc, char * argv[])
@@ -800,6 +913,33 @@ int main(int argc, char * argv[])
     for (int i=optcnt+1; i< argc; i++) {
         AnalyzeIGCFile(argv[i]);
     }
+
+    // Print out the HG XC results
+    std::cout << "\nHG XC Summary" << std::endl;
+    std::cout << std::setprecision(3);
+    for (const auto &ele : pilots)
+    {
+        std::cout << ele.first << std::endl;
+        Result rslt;
+        Do2(ele.second.SL, ele.second.OR, rslt);
+        Do2(ele.second.SL, ele.second.TR, rslt);
+        Do2(ele.second.OR, ele.second.SL, rslt);
+        Do2(ele.second.OR, ele.second.TR, rslt);
+        Do2(ele.second.TR, ele.second.SL, rslt);
+        Do2(ele.second.TR, ele.second.OR, rslt);
+        static std::string ftstr[] = {"SL", "OR", "TR"};
+        std::cout << "  max score = " << rslt.maxscore << std::endl;
+        std::cout << "    d1 = " << rslt.distance1 << " mi " << ftstr[rslt.ft1] << " " << rslt.date1 << std::endl;
+        if (rslt.distance2 > 0.0) {
+            std::cout << "    d2 = " << rslt.distance2 << " mi " << ftstr[rslt.ft2] << " " << rslt.date2 << std::endl;
+            if (rslt.ft1 != Sl && rslt.ft2 != Sl)
+                std::cout << "    d3 = " << ele.second.SL.first.distance << " mi SL " << ele.second.SL.first.date << std::endl;
+            else if (rslt.ft1 != Or && rslt.ft2 != Or)
+                std::cout << "    d3 = " << ele.second.OR.first.distance << " mi OR " << ele.second.OR.first.date << std::endl;
+            else
+                std::cout << "    d3 = " << ele.second.TR.first.distance << " mi TR " << ele.second.TR.first.date << std::endl;
+        }
+    }
+
     return 0;
 }
-
